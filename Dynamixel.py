@@ -12,7 +12,7 @@ import RPi.GPIO as GPIO
 
 class AX18A:
 	# AX-12A constants
-	instruction_packet = {
+	instruction = {
 		'ping': 0x01,
 		'read_data': 0x02,
 		'write_data': 0x03,
@@ -34,8 +34,6 @@ class AX18A:
 	}
 	return_delay = 0.0002
 
-	instruction_read_length = 4
-	instruction_ping_length = 2
 	broadcast_ID = 0xFE
 
 	# GPIO communication pins (BCM)
@@ -175,38 +173,55 @@ class AX18A:
 		else:
 			raise AX18A.AX18A_error("get_status_packet: Checksum error")
 
-	def get_instruction_start(self, length, instruction):
+	@staticmethod
+	def get_parameters_from_status_packet(status_packet):
+		try:
+			status_length = status_packet[3]
+			param_idx = 5+status_length-2
+			parameters = status_packet[5:param_idx]
+			print("param_idx: ", param_idx) # debugging
+		except IndexError:
+			raise AX18A.AX18A_error("get_parameters_from_status_packet: length error")
+		else:
+			return parameters
+
+	def get_instruction_packet(self, instruction, parameters):
 		# Method to create a bytearray object for instruction set
 		# length should be N_parameters + 2. total instruction length
 		# is therefore length+4, adding start, ID and length bytes 
 		# Returns value_error if length is too short
-		if (length < 2):
-			raise AX18A.AX18A_error("get_instruction_start: Length must be at least 2")
 
-		instruction_start = bytearray(length+4)
+		nParams = len(parameters)
+		length = nParams+2
+
+		instruction_paket = bytearray(length+4)	# Create instruction packet bytearray
 		try:
-			instruction_start[0] = 0xFF
-			instruction_start[1] = 0xFF
-			instruction_start[2] = self.ID
-			instruction_start[3] = length
-			instruction_start[4] = AX18A.instruction_packet[instruction]
+			instruction_paket[0] = 0xFF			# Start byte one
+			instruction_paket[1] = 0xFF			# Start byte two
+			instruction_paket[2] = self.ID 		# Servo ID
+			instruction_paket[3] = length 		# Length value (Nparameters+2)
+			instruction_paket[4] = AX18A.instruction[instruction] # Instruction value
+			# Add all parameter bytes
+			i = 5
+			for param in parameters:
+				instruction_packet[i] = param
+				i += 1
+			# Add checksum to final byte
+			instruction_packet[i] = AX18A.checksum(instruction_packet)
 		except ValueError:
-			raise AX18A.AX18A_error("get_instruction_error: A value was larger than one byte")
+			raise AX18A.AX18A_error("get_instruction_packet: A value was larger than one byte")
 		except KeyError:
-			raise AX18A.AX18A_error("get_instruction_error: Instruction key not valid")
+			raise AX18A.AX18A_error("get_instruction_packet: Instruction key not valid")
 		else:
-			return instruction_start
+			return instruction_paket
 
 
 	def ping(self):
 		AX18A.set_direction(AX18A.GPIO_direction_TX)
 		AX18A.port.flushInput()
 
-		out_data = self.get_instruction_start(AX18A.instruction_ping_length, 'ping')
-		if (out_data == AX18A.value_error):
-			return AX18A.value_error
-
-		out_data[5] = AX18A.checksum(out_data)
+		# Assemble instruction packet
+		out_data = self.get_instruction_packet('ping', ())
 
 		# Write the instruction packet
 		AX18A.port.write(out_data)
@@ -214,10 +229,10 @@ class AX18A:
 
 		# Read status packet
 		status_packet = AX18A.get_status_packet()
-
-
-
-
+		try:
+			status_error = status_packet[4]
+		except IndexError:
+			raise AX18A.AX18A_error("ping: length error")
 
 
 
@@ -229,14 +244,9 @@ class AX18A:
 
 		AX18A.set_direction(AX18A.GPIO_direction_TX)
 		AX18A.port.flushInput()
+
 		# Assemble the instruction packet
-		try:
-			out_data = self.get_instruction_start(AX18A.instruction_read_length, 'read_data')
-			out_data[5] = address
-			out_data[6] = length
-			out_data[7] = AX18A.checksum(out_data)
-		except ValueError:
-			raise AX18A.AX18A_error("read_data: A value was larger than one byte")
+		out_data = self.get_instruction_packet('read_data', (address, length))
 
 		# Write the instruction packet
 		AX18A.port.write(out_data)
@@ -247,13 +257,33 @@ class AX18A:
 		# Read status packet
 		status_packet = AX18A.get_status_packet()
 		# Extract parameters from status_packet
-		try:
-			status_length = status_packet[3]
-			param_idx = 5+status_length-2
-			parameters = status_packet[5:param_idx]
-			print("param_idx: ", param_idx) # debugging
-		except IndexError:
-			raise AX18A.AX18A_error("read_data: length error")
-		else:
-			return parameters
+		parameters = AX18A.get_parameters_from_status_packet(status_packet)
+		return parameters
+
+	def write_data(self, address, parameters):
+		# Method to send write data instruction to servo
+		# address is register start address for writing
+		# parameters is a list of all values to be written
+		# return status packet returned, although this has no real
+		# interrest as errors are raised if servo returns error
+
+		AX18A.set_direction(AX18A.GPIO_direction_TX)
+		AX18A.port.flushInput()
+
+		nParams = len(parameters)
+
+		# Assemble the instruction packet
+		parameters_full = (address,) + tuple(parameters)
+		out_data = self.get_instruction_start('write_data', parameters_full)
+
+		# Write instruction packet
+		AX18A.port.write(out_data)
+		AX18A.set_direction(AX18A.GPIO_direction_RX)
+
+		# Read status packet
+		status_packet = AX18A.get_status_packet()
+
+		return status_packet
+
+		
 
