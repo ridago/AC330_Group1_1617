@@ -52,7 +52,7 @@ class AX18A:
 		GPIO.setmode(GPIO.BCM)
 		GPIO.setup(AX18A.GPIO_direction, GPIO.OUT)
 		if(AX18A.port == None):
-			AX18A.port = Serial("/dev/ttyAMA0", baudrate=1000000, timeout=0.01)
+			AX18A.port = Serial("/dev/ttyAMA0", baudrate=1000000, timeout=0.1)
 
 		self.ID = ID
 		# Setup default register values
@@ -148,7 +148,7 @@ class AX18A:
 		# Method to get incomming status packet
 
 		# Set direction pin
-		AX18A.set_direction(AX18A.GPIO_direction_RX)
+		#AX18A.set_direction(AX18A.GPIO_direction_RX)
 		AX18A.wait(0.01)
 		print("In waiting: ", AX18A.port.inWaiting()) # debugging
 
@@ -227,6 +227,9 @@ class AX18A:
 				i += 1
 			# Add checksum to final byte
 			instruction_packet[i] = AX18A.checksum(instruction_packet)
+
+			print("get_instruction_packet: instruction_packet: ", instruction_packet) # Debug
+
 		except ValueError:
 			raise AX18A.AX18A_error("get_instruction_packet: A value was larger than one byte")
 		except KeyError:
@@ -271,7 +274,7 @@ class AX18A:
 
 		# Write instruction packet
 		AX18A.port.write(out_data)
-		print("out waiting: ", AX18A.port.out_waiting) # debugging
+		#print("out waiting: ", AX18A.port.out_waiting) # debugging
 		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 		#AX18A.wait(AX18A.return_delay)
 
@@ -349,8 +352,6 @@ class AX18A:
 		AX18A.set_direction(AX18A.GPIO_direction_TX)
 		AX18A.port.flushInput()
 
-		nParams = len(parameters)
-
 		# Assemble instruction packet
 		out_data = self.get_instruction_packet('action', ())
 
@@ -411,13 +412,18 @@ class AX18A:
 		# Assemble parameters list
 		parameters = [address, nParams] # Initial parameters
 		# Add parameters for each servo
-		for servo in args:
+		for i, servo in enumerate(args):
 			# Check that all tuples are same length
 			if (len(servo) != nParams):
 				raise AX18A.AX18A_error("sync_write: all servos must have the same amount of data to write")
+			# Add ID of servo to parameters
+			parameters.append(servos[i].ID)
+			print("Adding servo ID: ", servos[i].ID) # Debug
 			# Add each parameters for servo
 			for data in servo:
 				parameters.append(data)
+
+		print("sync_write: parameters: ", parameters)
 
 		# Assemble instruction packet
 		out_data = self.get_instruction_packet('sync_write', parameters)
