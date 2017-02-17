@@ -247,7 +247,14 @@ class AX18A:
 		error = reply[4]		# Get the error byte
 
 		if (error != 0):
-			raise AX18A.AX18A_error(error_code['servo'], "get_status_packet: Received error: ", AX18A.return_error[error])
+			# Create error tuple
+			error_list = []
+			for error_bit, error_name in AX18A.return_error.items():
+				if ((error_bit & error) == error_bit):
+					error_list.append(error_name)
+			error_tuple = tuple(error_list)
+
+			raise AX18A.AX18A_error(error_code['servo'], "get_status_packet: Received error: ", error_tuple)
 
 		parameters = AX18A.port.read(length)
 		received_checksum = AX18A.port.read(1)
@@ -359,6 +366,7 @@ class AX18A:
 
 	def write_data(self, address, parameters):
 		# Method to send write data instruction to servo
+		# Updated the register list if successfull write
 		# 	address: 	register start address for writing
 		# 	parameters:	is a list of all values to be written
 		# return status packet received
@@ -389,6 +397,7 @@ class AX18A:
 
 	def reg_write(self, address, parameters):
 		# Method to send reg_write instruction to servo
+		# Updated the register list if successfull write
 		# 	address: 	register start address for writing
 		# 	parameters:	is a list of all values to be written
 		# return status packet received
@@ -560,7 +569,7 @@ class AX18A:
 		else:
 			self.write_data(AX18A.address['goal_position_l'], (angle_l, angle_h, speed_l, speed_h))
 
-	def set_angle_limit(angle_limit, direction):
+	def set_angle_limit(self, angle_limit, direction):
 		# Method to set angle limit of servo
 		#	angle_limit:	numeric value from 30 to 330 degrees 
 		#					(servo angle limits)
@@ -587,3 +596,48 @@ class AX18A:
 		# Write angle limit
 		self.write_data(address, (angle_l, angle_h))
 
+	def set_id(self, new_id):
+		# Method to set the ID of the servo, also changes id of instance
+		#	new_id:	new servo ID
+
+		# Check id parameter
+		if (new_id<0 or new_id>252):
+			raise AX18A.AX18A_error(error_code['parameter'], "set_id: new_id must be in range 0-252")
+
+		# Write id to servo register
+		self.write_data(address['id'], (new_id,))
+		# Change instance id
+		self.ID = new_id
+
+	def set_max_torque(self, max_torque):
+		# Method to set the Max Torque of the servo (EEPROM area)
+		#	max_torque:	percentage value for max torque 0-100%
+
+		# Check max_torque parameter
+		if (max_torque < 0 or max_torque > 100):
+			raise AX18A.AX18A_error(error_code['parameter'], "set_max_torque: max_torque must be in range 0-100")
+
+		# Get lowest and highest byte of torque value
+		torque_value = int(max_torque*10.23)
+		torque_l = torque_value & 0xFF
+		torque_h = torque_value >> 8
+
+		# Write to servo max torque registers
+		self.write_data(address['max_torque_l'], (torque_l, torque_h))
+
+	def set_torque_limit(self, torque_limit):
+		# Method to set the servo Torque Limit (RAM area)
+		# if servo shuts itself down this must be set to turn it back on
+		#	torque_limit:	percentage value for torque limit 0-100%
+
+		# Check torque_limit parameter
+		if (torque_limit < 0 or torque_limit > 100):
+			raise AX18A.AX18A_error(error_code['parameter'], "set_torque_limit: torque_limit must be in range 0-100")
+
+		# Get lowest and highest byte of torque value
+		torque_value = int(torque_limit*10.23)
+		torque_l = torque_value & 0xFF
+		torque_h = torque_value >> 8
+
+		# Write to servo max torque registers
+		self.write_data(address['torque_limit_l'], (torque_l, torque_h))
