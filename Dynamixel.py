@@ -101,11 +101,12 @@ class AX18A:
 	}
 
 	# Standard speed values
-	speed = {
-		'slow': 0x00FF,
-		'medium': 0x0200,
-		'fast': 0x0399
-	}
+	slow = 5
+	medium = 15
+	fast = 25
+
+	CW = 1
+	CCW = 0
 
 	# GPIO communication pins (BCM)
 	GPIO_direction = 18
@@ -126,59 +127,63 @@ class AX18A:
 			AX18A.port = Serial("/dev/ttyAMA0", baudrate=1000000, timeout=0.1)
 		self.ID = ID
 		
-		# Setup default register values
-		self.register = [
-			0x12,
-			0x00, 
-			0x00,
-			self.ID,
-			0x01,
-			0xFA,
-			0x00,
-			0x00,
-			0xFF,
-			0x03,
-			0x00,
-			0x46,
-			0x3C,
-			0x8C,
-			0xD7,
-			0x03,
-			0x02,
-			0x24,
-			0x24,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x01,
-			0x01,
-			0x20,
-			0x20,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0xD7,
-			0x03,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x00,
-			0x20,
-			0x00
-		]
+		if (self.ID != AX18A.broadcast_ID):
+			# Setup default register values
+			self.register = [
+				0x12,
+				0x00, 
+				0x00,
+				self.ID,
+				0x01,
+				0xFA,
+				0x00,
+				0x00,
+				0xFF,
+				0x03,
+				0x00,
+				0x46,
+				0x3C,
+				0x8C,
+				0xD7,
+				0x03,
+				0x02,
+				0x24,
+				0x24,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x01,
+				0x01,
+				0x20,
+				0x20,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0xD7,
+				0x03,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x00,
+				0x20,
+				0x00
+			]
+
+			# Get actual register values from servo
+			self.update_register()
 
 	@staticmethod
 	def wait(s):
@@ -199,14 +204,13 @@ class AX18A:
 		# data must be the bytearray that is the instruction or status packet
 		list_length = len(data)
 		if (list_length < 6):
-			raise AX18A.AX18A_error(error_code['parameter'], "Checksum: Data too short")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "Checksum: Data too short")
 
 		# Add ID, length, instruction and each parameter into checksum
 		# exclude the checksum byte from the addition, although this should 
 		# be 0 anyways
 		inverted_sum = data[2]
 		for byte in data[3:list_length-1]:
-			print("checksum: adding ", byte, "to ", inverted_sum)
 			inverted_sum += byte
 
 		# Return lowest byte
@@ -226,8 +230,8 @@ class AX18A:
 		# Method to get incomming status packet
 
 		# Set direction pin
-		#AX18A.set_direction(AX18A.GPIO_direction_RX)
-		AX18A.wait(0.01)
+		AX18A.set_direction(AX18A.GPIO_direction_RX)
+		#AX18A.wait(0.01)
 		print("In waiting: ", AX18A.port.inWaiting()) # debugging
 
 		# Read 5 first bytes [0xFF, 0xFF, id, length, error]
@@ -239,9 +243,9 @@ class AX18A:
 		try:
 			assert (reply[0] == 0xFF) and (reply[1] == 0xFF)
 		except IndexError:
-			raise AX18A.AX18A_error(error_code['timeout'], "get_status_packet: Timeout error")
+			raise AX18A.AX18A_error(AX18A.error_code['timeout'], "get_status_packet: Timeout error")
 		except AssertionError:
-			raise AX18A.AX18A_error(error_code['start_signal'], "get_status_packet: Start signal incorrect")
+			raise AX18A.AX18A_error(AX18A.error_code['start_signal'], "get_status_packet: Start signal incorrect")
 
 		length = reply[3] - 2 	# Convert length byte to indicate number of parameters
 		error = reply[4]		# Get the error byte
@@ -254,7 +258,7 @@ class AX18A:
 					error_list.append(error_name)
 			error_tuple = tuple(error_list)
 
-			raise AX18A.AX18A_error(error_code['servo'], "get_status_packet: Received error: ", error_tuple)
+			raise AX18A.AX18A_error(AX18A.error_code['servo'], "get_status_packet: Received error: ", error_tuple)
 
 		parameters = AX18A.port.read(length)
 		received_checksum = AX18A.port.read(1)
@@ -267,7 +271,7 @@ class AX18A:
 		if (calculated_checksum == received_checksum[0]):
 			return status_packet
 		else:
-			raise AX18A.AX18A_error(error_code['checksum'], "get_status_packet: Checksum error")
+			raise AX18A.AX18A_error(AX18A.error_code['checksum'], "get_status_packet: Checksum error")
 
 	@staticmethod
 	def get_parameters_from_status_packet(status_packet):
@@ -281,7 +285,7 @@ class AX18A:
 			parameters = status_packet[5:checksum_idx]	# Get parameters
 			print("checksum_idx: ", checksum_idx) # debugging
 		except IndexError:
-			raise AX18A.AX18A_error(error_code['parameter'], "get_parameters_from_status_packet: length error")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_parameters_from_status_packet: length error")
 		else:
 			return parameters
 
@@ -311,9 +315,9 @@ class AX18A:
 			instruction_packet[i] = AX18A.checksum(instruction_packet)
 
 		except ValueError:
-			raise AX18A.AX18A_error(error_code['parameter'], "get_instruction_packet: A value was larger than one byte")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_instruction_packet: A value was larger than one byte")
 		except KeyError:
-			raise AX18A.AX18A_error(error_code['parameter'], "get_instruction_packet: Instruction key not valid")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_instruction_packet: Instruction key not valid")
 		else:
 			return instruction_packet
 
@@ -355,7 +359,7 @@ class AX18A:
 		# Write instruction packet
 		AX18A.port.write(out_data)
 		#print("out waiting: ", AX18A.port.out_waiting) # debugging
-		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
+		#AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 		#AX18A.wait(AX18A.return_delay)
 
 		# Read status packet
@@ -383,13 +387,13 @@ class AX18A:
 
 		# Write instruction packet
 		AX18A.port.write(out_data)
-		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
+		#AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
 		# Read status packet if not broadcast ID
 		if (self.ID != AX18A.broadcast_ID):
 			status_packet = AX18A.get_status_packet()
 			# Update register values if status packet returned
-			register[address:(address+nParams)] = parameters
+			self.register[address:(address+nParams)] = parameters
 		else:
 			status_packet = 0
 
@@ -422,7 +426,7 @@ class AX18A:
 		if (self.ID != AX18A.broadcast_ID):
 			status_packet = AX18A.get_status_packet()
 			# Update register values if status packet returned
-			register[address:(address+nParams)] = parameters
+			self.register[address:(address+nParams)] = parameters
 		else:
 			status_packet = 0
 
@@ -485,12 +489,12 @@ class AX18A:
 
 		# Check that broadcasting ID is being used
 		if (self.ID != AX18A.broadcast_ID):
-			raise AX18A.AX18A_error(error_code['parameter'], "sync_write: instance ID must be broadcasting ID (0xFE)")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "sync_write: instance ID must be broadcasting ID (0xFE)")
 
 		# Check that servos length adds up with *args length
 		nServos = len(servos)
 		if (nServos != len(args)):
-			raise AX18A.AX18A_error(error_code['parameter'], "sync_write: number of servos not equal to number of write tuples")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "sync_write: number of servos not equal to number of write tuples")
 
 		# Get number of parameters from number of variables in first arg tuple
 		nParams = len(args[0])
@@ -501,7 +505,7 @@ class AX18A:
 		for i, servo in enumerate(args):
 			# Check that all tuples are same length
 			if (len(servo) != nParams):
-				raise AX18A.AX18A_error(error_code['parameter'], "sync_write: all servos must have the same amount of data to write")
+				raise AX18A.AX18A_error(AX18A.error_code['parameter'], "sync_write: all servos must have the same amount of data to write")
 			# Add ID of servo to parameters
 			parameters.append(servos[i].ID)
 			print("Adding servo ID: ", servos[i].ID) # Debug
@@ -531,27 +535,19 @@ class AX18A:
 	def move(self, angle, speed, method="normal"):
 		# Method to send a move command to the servo
 		#	angle: 	numeric value from 30 to 330 degrees (servo angle limits)
-		#	speed: 	either string matching the speed dictionary or
-		#			rpm number from 0 to 113.5
+		#	speed: 	rpm number from 0 to 113.5, can use AX18A.slow, medium or fast
 		#	method:	normal or reg; decides if write_data or reg_write is used
 
 		# Check angle parameter
 		if (angle < 30 or angle > 330):
-			raise AX18A.AX18A_error(error_code['parameter'], "move: angle must be between 30 and 330")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "move: angle must be between 30 and 330")
 
-		if (isinstance(speed, str)):
-			try:
-				speed_value = self.speed[speed]
-			except KeyError:
-				raise AX18A.AX18A_error(error_code['parameter'], "move: speed must be number or one of the valid speed options")
-		else:
-			# Check that speed value is in range
-			if (speed_value < 0 or speed_value > 113.5):
-				raise AX18A.AX18A_error(error_code['parameter'], "move: speed number must be between 0 and 113.5")
-			# Get servo equivalent value
-			speed_value = int(speed/0.111)
+		# Check that speed value is in range
+		if (speed < 0 or speed > 113.5):
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "move: speed number must be between 0 and 113.5")
 
-		
+		# Get servo equivalent value
+		speed_value = int(speed/0.111)
 
 		# Get lowest and highest byte of angle value
 		dynamixel_angle = angle-30
@@ -573,11 +569,11 @@ class AX18A:
 		# Method to set angle limit of servo
 		#	angle_limit:	numeric value from 30 to 330 degrees 
 		#					(servo angle limits)
-		#	direction:		string with value cw or ccw
+		#	direction:		AX18A.CW or AX18A.CCW
 
 		# Check angle parameter
 		if (angle_limit < 30 or angle_limit > 330):
-			raise AX18A.AX18A_error(error_code['parameter'], "set_angle_limit: angle_limit must be between 30 and 330")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_angle_limit: angle_limit must be between 30 and 330")
 
 		# Get lowest and highest byte of angle_limit value
 		dynamixel_angle = angle_limit-30
@@ -586,12 +582,12 @@ class AX18A:
 		angle_h = angle_value >> 8
 
 		# Get register address from direction
-		if (direction == "cw" or direction == "CW"):
+		if (direction == AX18A.CW):
 			address = AX18A.address['cw_angle_limit_l']
-		elif (direction == "ccw" or direction = "CCW"):
+		elif (direction == AX18A.CW):
 			address = AX18A.address['ccw_angle_limit_l']
 		else:
-			raise AX18A.AX18A_error(error_code['parameter'], "set_angle_limit: direction must be either cw or ccw")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
 
 		# Write angle limit
 		self.write_data(address, (angle_l, angle_h))
@@ -602,10 +598,10 @@ class AX18A:
 
 		# Check id parameter
 		if (new_id<0 or new_id>252):
-			raise AX18A.AX18A_error(error_code['parameter'], "set_id: new_id must be in range 0-252")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_id: new_id must be in range 0-252")
 
 		# Write id to servo register
-		self.write_data(address['id'], (new_id,))
+		self.write_data(AX18A.address['id'], (new_id,))
 		# Change instance id
 		self.ID = new_id
 
@@ -615,7 +611,7 @@ class AX18A:
 
 		# Check max_torque parameter
 		if (max_torque < 0 or max_torque > 100):
-			raise AX18A.AX18A_error(error_code['parameter'], "set_max_torque: max_torque must be in range 0-100")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_max_torque: max_torque must be in range 0-100")
 
 		# Get lowest and highest byte of torque value
 		torque_value = int(max_torque*10.23)
@@ -623,7 +619,33 @@ class AX18A:
 		torque_h = torque_value >> 8
 
 		# Write to servo max torque registers
-		self.write_data(address['max_torque_l'], (torque_l, torque_h))
+		self.write_data(AX18A.address['max_torque_l'], (torque_l, torque_h))
+
+	def set_compliance(self, margin, slope, direction):
+		# Method to set compliance margin and slope for selected direction
+		#	margin:		compliance margin in degrees, from 0 to 73 degrees
+		#	slope: 		value in range 1-7 representing slope level (see documentation)
+		#	direction:	AX18A.CW or AX18A.CCW
+
+		# Check parameters
+		if (margin < 0 or margin > 73):
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_compliance: margin must be in range 0-73")
+
+		if (not slope in range(1,8)):
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_compliance: slope must be in range 1-7")
+
+		# Calculate register values
+		margin_value = int(margin/0.29)
+		slope_value = 2**slope
+			
+		# Write to registers corresponding to selected direction
+		if (direction == AX18A.CW):
+			self.write_data(AX18A.address['cw_compliance_margin'], (margin_value,))
+			self.write_data(AX18A.address['cw_compliance_slope'], (slope_value,))
+		elif (direction == AX18A.CCW):
+			self.write_data(AX18A.address['ccw_compliance_margin'], (margin_value,))
+			self.write_data(AX18A.address['ccw_compliance_slope'], (slope_value,))
+
 
 	def set_torque_limit(self, torque_limit):
 		# Method to set the servo Torque Limit (RAM area)
@@ -632,7 +654,7 @@ class AX18A:
 
 		# Check torque_limit parameter
 		if (torque_limit < 0 or torque_limit > 100):
-			raise AX18A.AX18A_error(error_code['parameter'], "set_torque_limit: torque_limit must be in range 0-100")
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_torque_limit: torque_limit must be in range 0-100")
 
 		# Get lowest and highest byte of torque value
 		torque_value = int(torque_limit*10.23)
@@ -641,3 +663,55 @@ class AX18A:
 
 		# Write to servo max torque registers
 		self.write_data(address['torque_limit_l'], (torque_l, torque_h))
+
+	def set_punch(self, punch):
+		# Method to set servo punch (minimum current to drive motor)
+		# Documentation does not specify anything about this value
+		# and parameter is therefore simply the register value
+		#	punch:	value between 0x03FF and 0x0020
+
+		if (not punch in range(0x0020, 0x0400)):
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_punch: punch must be in range 0x0020-0x03FF")
+
+		# Get lowest and highest byte of punch
+		punch_l = punch & 0xFF
+		punch_h = punch >> 8
+
+		# Write to servo punch registers
+		self.write_data(AX18A.address['punch_l'], (punch_l, punch_h))
+
+	def get_angle_limit(self, direction):
+		# Method to get the angle limit in degrees for the selected direction
+		# Does not communicate with servo, since local register values for
+		# EEPROM should always be correct
+		#	direction:	AX18A.CW or AX18A.CCW
+
+		# Get lowest and highest byte from register
+		if (direction == AX18A.CW):
+			angle_l = self.register[AX18A.address['cw_angle_limit_l']]
+			angle_h = self.register[AX18A.address['cw_angle_limit_h']]
+		elif (direction == AX18A.CCW):
+			angle_l = self.register[AX18A.address['ccw_angle_limit_l']]
+			angle_h = self.register[AX18A.address['ccw_angle_limit_h']]
+		else:
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
+
+		angle_full = angle_h << 8 | angle_l 	# Assemble 16bit variable (10bit max)
+		dynamixel_angle = angle_full/3.41		# Get angle as described in Dynamixel documentation
+		angle_limit = dynamixel_angle + 30		# Convert to angle that makes more sense
+
+		return angle_limit
+
+	def get_max_torque(self):
+		# Method to get max torque in percentage value
+		# Does not communicate with servo, since local register values
+		# for EEPROM should always be correct
+
+		# Get lowest and highest byte from register
+		torque_l = self.register[AX18A.address['max_torque_l']]
+		torque_h = self.register[AX18A.address['max_torque_h']]
+
+		torque_full = torque_h << 8 | torque_l 	# Assemble 16bit variable (10bit max)
+		max_torque = torque_full/10.23 			# Convert to percentage value
+
+		return max_torque
