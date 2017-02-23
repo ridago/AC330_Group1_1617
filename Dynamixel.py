@@ -71,7 +71,7 @@ class AX18A:
 
 	# AX-12A return error bits
 	return_error = {
-		1: "Inpput Voltage",
+		1: "Input Voltage",
 		2: "Angle Limit",
 		4: "Overheating",
 		8: "Range",
@@ -79,7 +79,16 @@ class AX18A:
 		32: "Overload",
 		64: "Instruction"
 	}
-	return_delay = 0.0002
+
+	return_error_value = {
+		'Input Voltage': 1,
+		'Angle Limit': 2,
+		'Overheating': 4,
+		'Range': 8,
+		'Checksum': 16,
+		'Overload': 32,
+		'Instruction': 64
+	}
 
 	# Dictionary containing error codes,
 	# short description as key
@@ -118,6 +127,10 @@ class AX18A:
 	port = None
 
 	class AX18A_error(Exception) : pass
+
+# ---------------------------------------------
+# ---------- INIT AND SETUP METHODS -----------
+# ---------------------------------------------
 
 	def __init__(self, ID):
 		GPIO.setwarnings(False)
@@ -184,6 +197,20 @@ class AX18A:
 
 			# Get actual register values from servo
 			self.update_register()
+
+	def update_register(self):
+		# Method to read the whole servo register into the local register list
+
+		# Read all values from servo
+		rx_register = self.read_data(0x00, 50)
+
+		# Update register list
+		for i, value in enumerate(rx_register):
+			self.register[i] = value
+
+# ---------------------------------------------
+# ----------- EASE OF LIFE METHODS ------------
+# ---------------------------------------------
 
 	@staticmethod
 	def wait(s):
@@ -252,16 +279,17 @@ class AX18A:
 
 		if (error != 0):
 			# Create error tuple
-			error_list = []
-			for error_bit, error_name in AX18A.return_error.items():
-				if ((error_bit & error) == error_bit):
-					error_list.append(error_name)
-			error_tuple = tuple(error_list)
+			error_tuple = AX18A.get_error_tuple(error)
 
+			# Raise error with error tuple attached
 			raise AX18A.AX18A_error(AX18A.error_code['servo'], "get_status_packet: Received error: ", error_tuple)
 
 		parameters = AX18A.port.read(length)
+		if (len(parameters) < length):
+			raise AX18A.AX18A_error(AX18A.error_code['timeout'], "get_status_packet: Timeout error")
 		received_checksum = AX18A.port.read(1)
+		if (len(received_checksum) < 1):
+			raise AX18A.AX18A_error(AX18A.error_code['timeout'], "get_status_packet: Timeout error")
 		print("Paramters: ", parameters) # debugging
 
 		status_packet = reply + parameters + received_checksum 	# Assemble status packet
@@ -283,11 +311,24 @@ class AX18A:
 			status_length = status_packet[3]			# Excract length value
 			checksum_idx = 5+status_length-2			# Get index of checksum value
 			parameters = status_packet[5:checksum_idx]	# Get parameters
-			print("checksum_idx: ", checksum_idx) # debugging
 		except IndexError:
 			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_parameters_from_status_packet: length error")
 		else:
 			return parameters
+
+	@staticmethod
+	def get_error_tuple(error_byte):
+		# Method that returns the names of all errors matching the
+		# bits in error_byte variable
+		#	error_byte:	number between 0 and 127 where each bit represents an error
+
+		error_list = []
+		for error_bit, error_name in AX18A.return_error.items():
+			if ((error_bit & error_byte) == error_bit):
+				error_list.append(error_name)
+
+		error_tuple = tuple(error_list)
+		return error_tuple
 
 	def get_instruction_packet(self, instruction, parameters):
 		# Method to create a bytearray object for instruction packet
@@ -321,6 +362,9 @@ class AX18A:
 		else:
 			return instruction_packet
 
+# ---------------------------------------------
+# ----------- COMMUNICATION METHODS -----------
+# ---------------------------------------------
 
 	def ping(self):
 		# Method to send the ping instruction to servo
@@ -347,7 +391,8 @@ class AX18A:
 		# Method to send the read data instruction to servo
 		# 	address: 	register start address for reading
 		# 	length: 	is number of register addresses to read from
-		# Returns parameters read
+		# Returns parameters read. If only one parameter read, value
+		# is returned in stead of tuple
 
 		# Set direction pin to TX and flush all serial input
 		AX18A.set_direction(AX18A.GPIO_direction_TX)
@@ -366,9 +411,14 @@ class AX18A:
 		status_packet = AX18A.get_status_packet()
 		# Extract parameters from status_packet
 		parameters = AX18A.get_parameters_from_status_packet(status_packet)
-		return parameters
 
-	def write_data(self, address, parameters):
+		# If only one parameter read, return that value, otherwise return tuple
+		if (length == 1):
+			return parameters[0]
+		else:
+			return parameters
+
+	def write_data(self, address, *parameters):
 		# Method to send write data instruction to servo
 		# Updated the register list if successfull write
 		# 	address: 	register start address for writing
@@ -399,7 +449,7 @@ class AX18A:
 
 		return status_packet
 
-	def reg_write(self, address, parameters):
+	def reg_write(self, address, *parameters):
 		# Method to send reg_write instruction to servo
 		# Updated the register list if successfull write
 		# 	address: 	register start address for writing
@@ -522,17 +572,11 @@ class AX18A:
 		AX18A.port.write(out_data)
 		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
-	def update_register(self):
-		# Method to read the whole servo register into the local register list
+# ---------------------------------------------
+# ---------------- SET METHODS ----------------
+# ---------------------------------------------
 
-		# Read all values from servo
-		rx_register = self.read_data(0x00, 50)
-
-		# Update register list
-		for i, value in enumerate(rx_register):
-			self.register[i] = value
-
-	def move(self, angle, speed, method="normal"):
+	def move(self, angle, speed=medium, method="normal"):
 		# Method to send a move command to the servo
 		#	angle: 	numeric value from 30 to 330 degrees (servo angle limits)
 		#	speed: 	rpm number from 0 to 113.5, can use AX18A.slow, medium or fast
@@ -561,9 +605,9 @@ class AX18A:
 
 		# Write using either write_data or reg_write instruction
 		if (method == "reg"):
-			self.reg_write(AX18A.address['goal_position_l'], (angle_l, angle_h, speed_l, speed_h))
+			self.reg_write(AX18A.address['goal_position_l'], angle_l, angle_h, speed_l, speed_h)
 		else:
-			self.write_data(AX18A.address['goal_position_l'], (angle_l, angle_h, speed_l, speed_h))
+			self.write_data(AX18A.address['goal_position_l'], angle_l, angle_h, speed_l, speed_h)
 
 	def set_angle_limit(self, angle_limit, direction):
 		# Method to set angle limit of servo
@@ -590,7 +634,7 @@ class AX18A:
 			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
 
 		# Write angle limit
-		self.write_data(address, (angle_l, angle_h))
+		self.write_data(address, angle_l, angle_h)
 
 	def set_id(self, new_id):
 		# Method to set the ID of the servo, also changes id of instance
@@ -601,7 +645,7 @@ class AX18A:
 			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_id: new_id must be in range 0-252")
 
 		# Write id to servo register
-		self.write_data(AX18A.address['id'], (new_id,))
+		self.write_data(AX18A.address['id'], new_id)
 		# Change instance id
 		self.ID = new_id
 
@@ -619,7 +663,73 @@ class AX18A:
 		torque_h = torque_value >> 8
 
 		# Write to servo max torque registers
-		self.write_data(AX18A.address['max_torque_l'], (torque_l, torque_h))
+		self.write_data(AX18A.address['max_torque_l'], torque_l, torque_h)
+
+	def set_alarm(self, alarm, *args):
+		# Method to set which error the LED or shutdown should be activated for
+		#	alarm:	string led or shutdown
+		#	*args: 	either a single 8-bit number between 0 and 127 representing the error bits
+		#			or strings representing each error
+
+		# Get number of parameters
+		nParams = len(args)
+
+		# Check that parameters have been given
+		if (nParams == 0):
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], )
+
+		# Check if number given as parameter
+		if (isinstance(args[0], int)):
+			alarm_value = args[0]
+			# Check correct input
+			if (not alarm_value in range(0, 128)):
+				raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_alarm: error value must be in range 0-127")
+		else:
+			alarm_value = 0
+			# Loop through each given error and assemble alarm value
+			try:
+				for error_str in args:
+					alarm_value = alarm_value | AX18A.return_error_value[error_str]
+			except KeyError:
+				# Raise error if incorrect string given
+				raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_alarm: at least one error name was incorrect")
+
+		if (alarm == "led" or alarm == "LED"):
+			# Write value to register
+			self.write_data(AX18A.address['alarm_led'], alarm_value)
+		elif (alarm == "shutdown" or alarm == "SHUTDOWN"):
+			# Write value to register
+			self.write_data(AX18A.address['alarm_shutdown'], alarm_value)
+		else:
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_alarm: alarm must be either led or shutdown")
+
+	def set_torque_enable(self, torque_enable):
+		# Method to set torque enable. Torque enable makes the servo generate
+		# torque to stay in place
+		# 	torque_enable:	boolean true or false
+
+		# Set value to write (1 for enable 0 for disable)
+		if (torque_enable):
+			write_value = 1
+		else:
+			write_value = 0
+
+		# Write to register
+		self.write_data(AX18A.address['torque_enable'], write_value)
+
+	def set_led(self, led):
+		# Method to turn led on or off
+		#	led: boolean true or false
+
+		# Set value to write (1 for on 0 for off)
+		if (led):
+			write_value = 1
+		else:
+			write_value = 0
+
+		# Write to register
+		self.write_data(AX18A.address['led'], write_value)
+			
 
 	def set_compliance(self, margin, slope, direction):
 		# Method to set compliance margin and slope for selected direction
@@ -640,11 +750,13 @@ class AX18A:
 			
 		# Write to registers corresponding to selected direction
 		if (direction == AX18A.CW):
-			self.write_data(AX18A.address['cw_compliance_margin'], (margin_value,))
-			self.write_data(AX18A.address['cw_compliance_slope'], (slope_value,))
+			self.write_data(AX18A.address['cw_compliance_margin'], margin_value)
+			self.write_data(AX18A.address['cw_compliance_slope'], slope_value)
 		elif (direction == AX18A.CCW):
-			self.write_data(AX18A.address['ccw_compliance_margin'], (margin_value,))
-			self.write_data(AX18A.address['ccw_compliance_slope'], (slope_value,))
+			self.write_data(AX18A.address['ccw_compliance_margin'], margin_value)
+			self.write_data(AX18A.address['ccw_compliance_slope'], slope_value)
+		else:
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "set_compliance: direction must be AX18A.CW or AX18A.CCW")
 
 
 	def set_torque_limit(self, torque_limit):
@@ -662,7 +774,7 @@ class AX18A:
 		torque_h = torque_value >> 8
 
 		# Write to servo max torque registers
-		self.write_data(address['torque_limit_l'], (torque_l, torque_h))
+		self.write_data(AX18A.address['torque_limit_l'], torque_l, torque_h)
 
 	def set_punch(self, punch):
 		# Method to set servo punch (minimum current to drive motor)
@@ -678,7 +790,11 @@ class AX18A:
 		punch_h = punch >> 8
 
 		# Write to servo punch registers
-		self.write_data(AX18A.address['punch_l'], (punch_l, punch_h))
+		self.write_data(AX18A.address['punch_l'], punch_l, punch_h)
+
+# ---------------------------------------------
+# ---------------- GET METHODS ----------------
+# ---------------------------------------------
 
 	def get_angle_limit(self, direction):
 		# Method to get the angle limit in degrees for the selected direction
@@ -715,3 +831,241 @@ class AX18A:
 		max_torque = torque_full/10.23 			# Convert to percentage value
 
 		return max_torque
+
+	def get_alarm(self, alarm):
+		# Method to get alarm led value
+		# first value returned is the register value, consecutive values
+		# are the names of each error.
+		# Des not communicate with servo, since local register values
+		# should be correct at all times
+		#	alarm:	led or shutdown
+
+		# Get register value for correct alarm
+		if (alarm == "led" or alarm == "LED"):
+			error_value = self.register[AX18A.address['alarm_led']]
+		elif (alarm == "shutdown" or alarm == "SHUTDOWN"):
+			error_value = self.register[AX18A.address['alarm_shutdown']]
+		else:
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_alarm: alarm must be either led or shutdown")
+
+		# Get error name tuple
+		error_tuple = AX18A.get_error_tuple(error_value)
+
+		return_tuple = (error_value,) + error_tuple
+		return return_tuple
+
+	def get_torque_enable(self):
+		# Method to get torque_enable status
+		# Reads from servo as this value is dynamic
+
+		# Read from servo 
+		torque_enable = self.read_data(AX18A.address['torque_enable'], 1)
+
+		# Update local register
+		self.register[AX18A.address['torque_enable']] = torque_enable
+
+		return torque_enable
+
+	def get_compliance(self, direction):
+		# Method to get compliance slope and margin
+		# Does not communicate with servo, since local register values
+		# should be correct at all times
+		#	direction: 	AX18A.CW or AX18A.CCW
+
+		# Get register values
+		if (direction == AX18A.CW):
+			margin_value = self.register[AX18A.address['cw_compliance_margin']]
+			slope_value = self.register[AX18A.address['cw_compliance_slope']]
+		elif (direction == AX18A.CCW):
+			margin_value = self.register[AX18A.address['ccw_compliance_margin']]
+			slope_value = self.register[AX18A.address['ccw_compliance_slope']]
+		else:
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_compliance: direction must be either AX18A.CW or AX18A.CCW")
+
+		# Convert to values of correct unit
+		margin = margin_value*0.29
+		slope = 1
+		slope_value = slope_value>>1
+		while(slope_value > 1):
+			slope_value = slope_value>>1
+			slope+=1
+
+		return (margin, slope)
+
+	def get_torque_limit(self):
+		# Method to get torque limit from servo
+		# This is dynamic according to the datasheet and will therefore
+		# communicate with servo. (Not sure if the datasheet is actually correct though)
+		# Torque limit is returned as a percentage value in range 0-100
+
+		# Read from servo
+		(torque_l, torque_h) = self.read_data(AX18A.address['torque_limit_l'], 2)
+
+		# Assemble full value
+		torque_value = torque_h << 8
+		torque_value = torque_value | torque_l
+
+		# Update local register
+		self.register[AX18A.address['torque_limit_l']] = torque_l
+		self.register[AX18A.address['torque_limit_h']] = torque_h
+
+		# Calculate percentage value
+		percentage_value = torque_value / 10.23
+		
+		return percentage_value
+
+	def get_position(self, time="current"):
+		# Method to get present or goal position of servo in degrees (30-330 degrees)
+		# Reads from servo and updates local register
+		#	time: 	current or goal, representing which position value to get
+		# Returns position in degrees
+
+		if (time == "current"):
+			register_address_l = AX18A.address['present_position_l']
+			register_address_h = AX18A.address['present_position_h']
+		elif (time == "goal"):
+			register_address_l = AX18A.address['goal_position_l']
+			register_address_h = AX18A.address['goal_position_h']
+		else:
+			raise AX18A.AX18A_error(AX18A.error_code['parameter'], "get_position: time must be either current or goal")
+
+		# Read from servo
+		(position_l, position_h) = self.read_data(register_address_l, 2)
+
+		# Assemble full value
+		position_value = position_h << 8
+		position_value = position_value | position_l
+
+		# Update local register
+		self.register[register_address_l] = position_l
+		self.register[register_address_h] = position_h
+
+		# Calculate angle value
+		dynamixel_angle = position_value/3.41
+		angle = dynamixel_angle+30
+
+		return angle
+
+	def get_speed(self):
+		# Method to get present speed from servo in rpm (0-113.5 rpm)
+		# Reads from servo and updates local register
+		# Returns speed in rpm
+
+		# Read from servo
+		(speed_l, speed_h) = self.read_data(AX18A.address['present_speed_l'], 2)
+
+		# Assemble full value
+		speed_value = speed_h << 8
+		speed_value = speed_value | speed_l
+
+		# Update local register
+		self.register[AX18A.address['present_speed_l']] = speed_l
+		self.register[AX18A.address['present_speed_h']] = speed_h
+
+		# Calculate rpm value
+		rpm = speed_value*0.111
+
+		return rpm
+
+	def get_load(self):
+		# Method to get present load from servo in percent of max load
+		# Reads from servo and updates local register
+		# Returns positive values for CW and negative for CCW
+
+		# Read from servo
+		(load_l, load_h) = self.read_data(AX18A.address['present_load_l'], 2)
+
+		# Assemble full value
+		load_value = load_h << 8
+		load_value = load_value | load_l
+
+		# Update local register
+		self.register[AX18A.address['present_load_l']] = load_l
+		self.register[AX18A.address['present_load_h']] = load_h
+
+		# Calculate percentage value
+		load = (load_value&0x3FF)/10.23
+		# Set correct sign (by multiplying with -1 if direction bit is 0)
+		load = load*(-1+2*(load_value>>10))
+
+		return load
+
+	def get_volt(self):
+		# Method to get present voltage from servo
+		# Reads from servo and updates local register
+		# Returns present voltage in volts
+
+		# Read from servo
+		volt_value = self.read_data(AX18A.address['present_voltage'], 1)
+
+		# Update local register
+		self.register[AX18A.address['present_voltage']] = volt_value
+
+		# Calculate voltage value
+		volt = volt_value/10
+
+		return volt
+
+	def get_temperature(self):
+		# Method to get present temperature from servo (in degrees C)
+		# Reads from servo and updates local register
+		# Returns temperature in degrees C
+
+		# Read from servo 
+		temperature = self.read_data(AX18A.address['present_temperature'], 1)
+
+		# Update local register
+		self.register[AX18A.address['present_temperature']] = temperature
+
+		# Register value is exactly the same as actual value
+		return int(temperature)
+
+	def get_registered(self):
+		# Method to check if servo has waiting reg_write command
+		# Reads from servo and updates local register
+		# Returns True if command waiting, False otherwise
+
+		# Read from servo
+		registered = self.read_data(AX18A.address['registered'], 1)
+
+		# Update local register
+		self.register[AX18A.address['registered']] = registered
+
+		return bool(registered)
+
+	def get_moving(self):
+		# Method to check if servo is moving
+		# Reads from servo and updates local register
+		# Returns True if moving, False if not
+
+		# Read from servo
+		moving = self.read_data(AX18A.address['moving'], 1)
+
+		# Update local register
+		self.register[AX18A.address['moving']] = moving
+
+		return bool(moving)
+
+	def get_punch(self):
+		# Method to get punch value from servo register
+		# Due to lack of documentation this is just the value store in register
+		# Does not communicate with servo, since local register value
+		# should be correct at all times
+
+		# Read from servo
+		(punch_l, punch_h) = self.read_data(AX18A.address['punch_l'], 2)
+
+		# Update local register
+		self.register[AX18A.address['punch_l']] = punch_l
+		self.register[AX18A.address['punch_l']] = punch_h
+
+		# Assemble full value
+		punch_value = punch_h << 8
+		punch_value = punch_value | punch_l
+
+		return punch_value
+
+# ---------------------------------------------
+# ---------- AUTOMATED FUNCTIONALITY ----------
+# ---------------------------------------------
+
