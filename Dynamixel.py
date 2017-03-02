@@ -90,25 +90,6 @@ class AX18A:
 		'Instruction': 64
 	}
 
-	# Dictionary containing error codes,
-	# short description as key
-	error_code = {
-		'servo': 256,
-		'timeout': 257,
-		'start_signal': 258,
-		'checksum': 259,
-		'parameter': 260
-	}
-
-	# Dictionary to get description of error codes
-	error_mask = {
-		256: "Servo returned error",
-		257: "Timeout error",
-		258: "Start signal error",
-		259: "Checksum error",
-		260: "Parameter error"
-	}
-
 	# Standard speed values
 	slow = 5
 	medium = 15
@@ -121,15 +102,17 @@ class AX18A:
 	GPIO_direction = 18
 	GPIO_TX = 14
 	GPIO_RX = 15
+	# Constants for setting direction
 	GPIO_direction_TX = 1
 	GPIO_direction_RX = 0
 
-	port = None
+	port = None			# Common port object
 
+	class CommError(Exception) : pass
 	class ServoError(Exception) : pass
-	class TimeoutError(Exception) : pass
-	class StartSignalError(Exception) : pass
-	class ChecksumError(Exception) : pass
+	class TimeoutError(CommError) : pass
+	class StartSignalError(CommError) : pass
+	class ChecksumError(CommError) : pass
 	class ParameterError(Exception) : pass
 
 # ---------------------------------------------
@@ -137,11 +120,14 @@ class AX18A:
 # ---------------------------------------------
 
 	def __init__(self, ID):
-		GPIO.setwarnings(False)
-		GPIO.setmode(GPIO.BCM)
-		GPIO.setup(AX18A.GPIO_direction, GPIO.OUT)
-		if(AX18A.port == None):
+		# Setup GPIO and port if not already set up
+		if (AX18A.port == None):
+			GPIO.setwarnings(False)
+			GPIO.setmode(GPIO.BCM)
+			GPIO.setup(AX18A.GPIO_direction, GPIO.OUT)
 			AX18A.port = Serial("/dev/ttyAMA0", baudrate=1000000, timeout=0.1)
+
+		# Set own ID
 		self.ID = ID
 		
 		if (self.ID != AX18A.broadcast_ID):
@@ -231,8 +217,9 @@ class AX18A:
 
 	@staticmethod
 	def checksum(data):
-		# Methyod to calculate checksum for an instruction packet, data.
+		# Method to calculate checksum for an instruction packet, data.
 		# data must be the bytearray that is the instruction or status packet
+
 		list_length = len(data)
 		if (list_length < 6):
 			raise AX18A.ParameterError(self.ID, "Checksum: Data too short")
@@ -262,13 +249,9 @@ class AX18A:
 
 		# Set direction pin
 		AX18A.set_direction(AX18A.GPIO_direction_RX)
-		#AX18A.wait(0.01)
-		print("In waiting: ", AX18A.port.inWaiting()) # debugging
 
 		# Read 5 first bytes [0xFF, 0xFF, id, length, error]
 		reply = AX18A.port.read(5)
-
-		print("reply: ", reply) # debugging
 
 		# Check that input is present and correct
 		try:
@@ -410,9 +393,6 @@ class AX18A:
 
 		# Write instruction packet
 		AX18A.port.write(out_data)
-		#print("out waiting: ", AX18A.port.out_waiting) # debugging
-		#AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
-		#AX18A.wait(AX18A.return_delay)
 
 		# Read status packet
 		status_packet = AX18A.get_status_packet()
@@ -444,7 +424,6 @@ class AX18A:
 
 		# Write instruction packet
 		AX18A.port.write(out_data)
-		#AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
 		# Read status packet if not broadcast ID
 		if (self.ID != AX18A.broadcast_ID):
@@ -477,8 +456,6 @@ class AX18A:
 		AX18A.port.write(out_data)
 		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
-		# TODO Check if reg_write returns status packet
-
 		# Read status packet if not broadcast ID
 		if (self.ID != AX18A.broadcast_ID):
 			status_packet = AX18A.get_status_packet()
@@ -506,8 +483,6 @@ class AX18A:
 		AX18A.port.write(out_data)
 		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
-		# TODO Check if action returns status packet
-
 		# Read status packet if not broadcast ID
 		if (self.ID != AX18A.broadcast_ID):
 			status_packet = AX18A.get_status_packet()
@@ -533,6 +508,10 @@ class AX18A:
 
 		# Read status packet
 		status_packet = AX18A.get_status_packet()
+		
+		# Set ID to 1 after reset
+		self.ID = 0x01
+
 		return status_packet
 
 	def sync_write(self, servos, address, *args):
@@ -543,6 +522,7 @@ class AX18A:
 		#	*args: 		a set of paramaters where each parameter is a tupple
 		#				containing the values to be written
 		# Nothing is returned, since broadcasting ID is used
+		# TESTING HAS SHOWN SYNC_WRITE NOT TO WORK, DESPITE MENTIONED IN DOCUMENTATION
 
 		# Check that broadcasting ID is being used
 		if (self.ID != AX18A.broadcast_ID):
@@ -565,12 +545,9 @@ class AX18A:
 				raise AX18A.ParameterError(self.ID, "sync_write: all servos must have the same amount of data to write")
 			# Add ID of servo to parameters
 			parameters.append(servos[i].ID)
-			print("Adding servo ID: ", servos[i].ID) # Debug
 			# Add each parameters for servo
 			for data in servo:
 				parameters.append(data)
-
-		print("sync_write: parameters: ", parameters)
 
 		# Assemble instruction packet
 		out_data = self.get_instruction_packet('sync_write', parameters)
@@ -787,10 +764,10 @@ class AX18A:
 		# Method to set servo punch (minimum current to drive motor)
 		# Documentation does not specify anything about this value
 		# and parameter is therefore simply the register value
-		#	punch:	value between 0x03FF and 0x0020
+		#	punch:	value between 0x03FF and 0x0000
 
-		if (not punch in range(0x0020, 0x0400)):
-			raise AX18A.ParameterError(self.ID, "set_punch: punch must be in range 0x0020-0x03FF")
+		if (not punch in range(0x0000, 0x0400)):
+			raise AX18A.ParameterError(self.ID, "set_punch: punch must be in range 0x0000-0x03FF")
 
 		# Get lowest and highest byte of punch
 		punch_l = punch & 0xFF
