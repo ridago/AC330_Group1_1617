@@ -21,7 +21,7 @@ class AX18A:
 		'reset': 0x06,
 		'sync_write': 0x83
 	}
-	broadcast_ID = 0xFE
+	broadcasting_id = 0xFE
 
 	address = {
 		'model_number_l': 0x00,
@@ -107,6 +107,7 @@ class AX18A:
 	GPIO_direction_RX = 0
 
 	port = None			# Common port object
+	retry_delay = 0.01
 
 	class CommError(Exception) : pass
 	class ServoError(Exception) : pass
@@ -130,7 +131,7 @@ class AX18A:
 		# Set own ID
 		self.ID = ID
 		
-		if (self.ID != AX18A.broadcast_ID):
+		if (self.ID != AX18A.broadcasting_id):
 			# Setup default register values
 			self.register = [
 				0x12,
@@ -222,7 +223,7 @@ class AX18A:
 
 		list_length = len(data)
 		if (list_length < 6):
-			raise AX18A.ParameterError(self.ID, "Checksum: Data too short")
+			raise AX18A.ParameterError(0xFF, "Checksum: Data too short")
 
 		# Add ID, length, instruction and each parameter into checksum
 		# exclude the checksum byte from the addition, although this should 
@@ -257,9 +258,9 @@ class AX18A:
 		try:
 			assert (reply[0] == 0xFF) and (reply[1] == 0xFF)
 		except IndexError:
-			raise AX18A.TimeoutError(self.ID, "get_status_packet: Timeout error")
+			raise AX18A.TimeoutError(0xFF, "get_status_packet: Timeout error")
 		except AssertionError:
-			raise AX18A.StartSignalError(self.ID, "get_status_packet: Start signal incorrect")
+			raise AX18A.StartSignalError(0xFF, "get_status_packet: Start signal incorrect")
 
 		length = reply[3] - 2 	# Convert length byte to indicate number of parameters
 		error = reply[4]		# Get the error byte
@@ -269,18 +270,18 @@ class AX18A:
 			error_tuple = AX18A.get_error_tuple(error)
 
 			# Raise error with error tuple attached
-			raise AX18A.ServoError(self.ID, "get_status_packet: Received error: ", error_tuple)
+			raise AX18A.ServoError(0xFF, ("get_status_packet: Received error: ", error_tuple), error)
 
 		# Read parameters
 		parameters = AX18A.port.read(length)
 		# Make sure parameters properly read
 		if (len(parameters) < length):
-			raise AX18A.TimeoutError(self.ID, "get_status_packet: Timeout error")
+			raise AX18A.TimeoutError(0xFF, "get_status_packet: Timeout error")
 		# Read checksum
 		received_checksum = AX18A.port.read(1)
 		# Make sure checksum properly read
 		if (len(received_checksum) < 1):
-			raise AX18A.TimeoutError(self.ID, "get_status_packet: Timeout error")
+			raise AX18A.TimeoutError(0xFF, "get_status_packet: Timeout error")
 
 		status_packet = reply + parameters + received_checksum 	# Assemble status packet
 		calculated_checksum = AX18A.checksum(status_packet)		# Get expected checksum
@@ -289,7 +290,7 @@ class AX18A:
 		if (calculated_checksum == received_checksum[0]):
 			return status_packet
 		else:
-			raise AX18A.ChecksumError(self.ID, "get_status_packet: Checksum error")
+			raise AX18A.ChecksumError(0xFF, "get_status_packet: Checksum error")
 
 	@staticmethod
 	def get_parameters_from_status_packet(status_packet):
@@ -302,7 +303,7 @@ class AX18A:
 			checksum_idx = 5+status_length-2			# Get index of checksum value
 			parameters = status_packet[5:checksum_idx]	# Get parameters
 		except IndexError:
-			raise AX18A.ParameterError(self.ID, "get_parameters_from_status_packet: length error")
+			raise AX18A.ParameterError(0xFF, "get_parameters_from_status_packet: length error")
 		else:
 			return parameters
 
@@ -360,20 +361,31 @@ class AX18A:
 		# Method to send the ping instruction to servo
 		# returns status packet received from servo
 
-		# Set direction pin to TX and flush all serial input
-		AX18A.set_direction(AX18A.GPIO_direction_TX)
-		AX18A.port.flushInput()
+		# Try three times in case of communication error
+		attempts = 0
+		while (attempts < 3):
+			try:
+				# Set direction pin to TX and flush all serial input
+				AX18A.set_direction(AX18A.GPIO_direction_TX)
+				AX18A.port.flushInput()
 
-		# Assemble instruction packet
-		out_data = self.get_instruction_packet('ping', ())
+				# Assemble instruction packet
+				out_data = self.get_instruction_packet('ping', ())
 
-		# Write instruction packet
-		AX18A.port.write(out_data)
-		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
+				# Write instruction packet
+				AX18A.port.write(out_data)
+				AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
-		# Read status packet
-		status_packet = AX18A.get_status_packet()
-		return status_packet
+				# Read status packet
+				status_packet = AX18A.get_status_packet()
+				return status_packet
+			except (AX18A.CommError) as err:
+				attempts += 1
+				if (attempts >= 3):
+					err.args = (self.id, err.args[1])
+					raise err
+				# Wait a set time before next attempt
+				AX18A.wait(AX18A.retry_delay)
 
 
 
@@ -384,26 +396,37 @@ class AX18A:
 		# Returns parameters read. If only one parameter read, value
 		# is returned in stead of tuple
 
-		# Set direction pin to TX and flush all serial input
-		AX18A.set_direction(AX18A.GPIO_direction_TX)
-		AX18A.port.flushInput()
+		# Try three times in case of communication error
+		attempts = 0
+		while (attempts < 3):
+			try:
+				# Set direction pin to TX and flush all serial input
+				AX18A.set_direction(AX18A.GPIO_direction_TX)
+				AX18A.port.flushInput()
 
-		# Assemble instruction packet
-		out_data = self.get_instruction_packet('read_data', (address, length))
+				# Assemble instruction packet
+				out_data = self.get_instruction_packet('read_data', (address, length))
 
-		# Write instruction packet
-		AX18A.port.write(out_data)
+				# Write instruction packet
+				AX18A.port.write(out_data)
 
-		# Read status packet
-		status_packet = AX18A.get_status_packet()
-		# Extract parameters from status_packet
-		parameters = AX18A.get_parameters_from_status_packet(status_packet)
+				# Read status packet
+				status_packet = AX18A.get_status_packet()
+				# Extract parameters from status_packet
+				parameters = AX18A.get_parameters_from_status_packet(status_packet)
 
-		# If only one parameter read, return that value, otherwise return tuple
-		if (length == 1):
-			return parameters[0]
-		else:
-			return parameters
+				# If only one parameter read, return that value, otherwise return tuple
+				if (length == 1):
+					return parameters[0]
+				else:
+					return parameters
+			except (AX18A.CommError) as err:
+				attempts += 1
+				if (attempts >= 3):
+					err.args = (self.id, err.args[1])
+					raise err
+				# Wait a set time before next attempt
+				AX18A.wait(AX18A.retry_delay)
 
 	def write_data(self, address, *parameters):
 		# Method to send write data instruction to servo
@@ -412,28 +435,39 @@ class AX18A:
 		# 	parameters:	is a list of all values to be written
 		# return status packet received
 
-		# Set direction pin to TX and flush all serial input
-		AX18A.set_direction(AX18A.GPIO_direction_TX)
-		AX18A.port.flushInput()
+		# Try three times in case of communication error
+		attempts = 0
+		while (attempts < 3):
+			try:
+				# Set direction pin to TX and flush all serial input
+				AX18A.set_direction(AX18A.GPIO_direction_TX)
+				AX18A.port.flushInput()
 
-		nParams = len(parameters)
+				nParams = len(parameters)
 
-		# Assemble instruction packet
-		parameters_full = (address,) + tuple(parameters)
-		out_data = self.get_instruction_packet('write_data', parameters_full)
+				# Assemble instruction packet
+				parameters_full = (address,) + tuple(parameters)
+				out_data = self.get_instruction_packet('write_data', parameters_full)
 
-		# Write instruction packet
-		AX18A.port.write(out_data)
+				# Write instruction packet
+				AX18A.port.write(out_data)
 
-		# Read status packet if not broadcast ID
-		if (self.ID != AX18A.broadcast_ID):
-			status_packet = AX18A.get_status_packet()
-			# Update register values if status packet returned
-			self.register[address:(address+nParams)] = parameters
-		else:
-			status_packet = 0
+				# Read status packet if not broadcast ID
+				if (self.ID != AX18A.broadcasting_id):
+					status_packet = AX18A.get_status_packet()
+					# Update register values if status packet returned
+					self.register[address:(address+nParams)] = parameters
+				else:
+					status_packet = 0
 
-		return status_packet
+				return status_packet
+			except (AX18A.CommError) as err:
+				attempts += 1
+				if (attempts >= 3):
+					err.args = (self.id, err.args[1])
+					raise err
+				# Wait a set time before next attempt
+				AX18A.wait(AX18A.retry_delay)
 
 	def reg_write(self, address, *parameters):
 		# Method to send reg_write instruction to servo
@@ -442,29 +476,38 @@ class AX18A:
 		# 	parameters:	is a list of all values to be written
 		# return status packet received
 
-		# Set direction pin to TX and flush all serial input
-		AX18A.set_direction(AX18A.GPIO_direction_TX)
-		AX18A.port.flushInput()
+		# Try three times in case of communication error
+		attempts = 0
+		while (attempts < 3):
+			try:
+				# Set direction pin to TX and flush all serial input
+				AX18A.set_direction(AX18A.GPIO_direction_TX)
+				AX18A.port.flushInput()
 
-		nParams = len(parameters)
+				nParams = len(parameters)
 
-		# Assemble instruction packet
-		parameters_full = (address,) + tuple(parameters)
-		out_data = self.get_instruction_packet('reg_write', parameters_full)
+				# Assemble instruction packet
+				parameters_full = (address,) + tuple(parameters)
+				out_data = self.get_instruction_packet('reg_write', parameters_full)
 
-		# Write instruction packet
-		AX18A.port.write(out_data)
-		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
+				# Write instruction packet
+				AX18A.port.write(out_data)
+				AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
-		# Read status packet if not broadcast ID
-		if (self.ID != AX18A.broadcast_ID):
-			status_packet = AX18A.get_status_packet()
-			# Update register values if status packet returned
-			self.register[address:(address+nParams)] = parameters
-		else:
-			status_packet = 0
+				# Read status packet if not broadcast ID
+				if (self.ID != AX18A.broadcasting_id):
+					status_packet = AX18A.get_status_packet()
+					# Update register values if status packet returned
+					self.register[address:(address+nParams)] = parameters
+				else:
+					status_packet = 0
 
-		return status_packet
+				return status_packet
+			except (AX18A.CommError) as err:
+				attempts += 1
+				if (attempts >= 3):
+					err.args = (self.id, err.args[1])
+					raise err
 
 	def action(self):
 		# Method to send action instruction to servo.
@@ -472,47 +515,65 @@ class AX18A:
 		# instance ID is broadcasting ID
 		# returns status packet received
 
-		# Set direction pin to TX and flush all serial input
-		AX18A.set_direction(AX18A.GPIO_direction_TX)
-		AX18A.port.flushInput()
+		# Try three times in case of communication error
+		attempts = 0
+		while (attempts < 3):
+			try:
+				# Set direction pin to TX and flush all serial input
+				AX18A.set_direction(AX18A.GPIO_direction_TX)
+				AX18A.port.flushInput()
 
-		# Assemble instruction packet
-		out_data = self.get_instruction_packet('action', ())
+				# Assemble instruction packet
+				out_data = self.get_instruction_packet('action', ())
 
-		# Write instruction packet
-		AX18A.port.write(out_data)
-		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
+				# Write instruction packet
+				AX18A.port.write(out_data)
+				AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
-		# Read status packet if not broadcast ID
-		if (self.ID != AX18A.broadcast_ID):
-			status_packet = AX18A.get_status_packet()
-		else:
-			status_packet = 0
+				# Read status packet if not broadcast ID
+				if (self.ID != AX18A.broadcasting_id):
+					status_packet = AX18A.get_status_packet()
+				else:
+					status_packet = 0
 
-		return status_packet
+				return status_packet
+			except (AX18A.CommError) as err:
+				attempts += 1
+				if (attempts >= 3):
+					err.args = (self.id, err.args[1])
+					raise err
 
 	def reset(self):
 		# Method to send the reset instruction to servo
 		# returns status packet received
 
-		# Set direction pin to TX and flush all serial input
-		AX18A.set_direction(AX18A.GPIO_direction_TX)
-		AX18A.port.flushInput()
+		# Try three times in case of communication error
+		attempts = 0
+		while (attempts < 3):
+			try:
+				# Set direction pin to TX and flush all serial input
+				AX18A.set_direction(AX18A.GPIO_direction_TX)
+				AX18A.port.flushInput()
 
-		# Assemble instruction packet
-		out_data = self.get_instruction_packet('reset', ())
+				# Assemble instruction packet
+				out_data = self.get_instruction_packet('reset', ())
 
-		# Write instruction packet
-		AX18A.port.write(out_data)
-		AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
+				# Write instruction packet
+				AX18A.port.write(out_data)
+				AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
-		# Read status packet
-		status_packet = AX18A.get_status_packet()
-		
-		# Set ID to 1 after reset
-		self.ID = 0x01
+				# Read status packet
+				status_packet = AX18A.get_status_packet()
+				
+				# Set ID to 1 after reset
+				self.ID = 0x01
 
-		return status_packet
+				return status_packet
+			except (AX18A.CommError) as err:
+				attempts += 1
+				if (attempts >= 3):
+					err.args = (self.id, err.args[1])
+					raise err
 
 	def sync_write(self, servos, address, *args):
 		# Method to send the sync_write command.
@@ -525,7 +586,7 @@ class AX18A:
 		# TESTING HAS SHOWN SYNC_WRITE NOT TO WORK, DESPITE MENTIONED IN DOCUMENTATION
 
 		# Check that broadcasting ID is being used
-		if (self.ID != AX18A.broadcast_ID):
+		if (self.ID != AX18A.broadcasting_id):
 			raise AX18A.ParameterError(self.ID, "sync_write: instance ID must be broadcasting ID (0xFE)")
 
 		# Check that servos length adds up with *args length
@@ -612,7 +673,7 @@ class AX18A:
 		# Get register address from direction
 		if (direction == AX18A.CW):
 			address = AX18A.address['cw_angle_limit_l']
-		elif (direction == AX18A.CW):
+		elif (direction == AX18A.CCW):
 			address = AX18A.address['ccw_angle_limit_l']
 		else:
 			raise AX18A.ParameterError(self.ID, "set_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
