@@ -270,7 +270,8 @@ class AX18A:
 			error_tuple = AX18A.get_error_tuple(error)
 
 			# Raise error with error tuple attached
-			raise AX18A.ServoError(0xFF, ("get_status_packet: Received error: ", error_tuple), error)
+			error_message = "get_status_packet: Received error: " + str(error_tuple)
+			raise AX18A.ServoError(0xFF, error_message, error)
 
 		# Read parameters
 		parameters = AX18A.port.read(length)
