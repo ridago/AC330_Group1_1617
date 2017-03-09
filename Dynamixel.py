@@ -129,15 +129,15 @@ class AX18A:
 			AX18A.port = Serial("/dev/ttyAMA0", baudrate=1000000, timeout=0.1)
 
 		# Set own ID
-		self.ID = ID
+		self.id = ID
 		
-		if (self.ID != AX18A.broadcasting_id):
+		if (self.id != AX18A.broadcasting_id):
 			# Setup default register values
 			self.register = [
 				0x12,
 				0x00, 
 				0x00,
-				self.ID,
+				self.id,
 				0x01,
 				0xFA,
 				0x00,
@@ -336,7 +336,7 @@ class AX18A:
 		try:
 			instruction_packet[0] = 0xFF			# Start byte one
 			instruction_packet[1] = 0xFF			# Start byte two
-			instruction_packet[2] = self.ID 		# Servo ID
+			instruction_packet[2] = self.id 		# Servo ID
 			instruction_packet[3] = length 			# Length value (Nparameters+2)
 			instruction_packet[4] = AX18A.instruction[instruction] # Instruction value
 			# Add all parameter bytes
@@ -348,9 +348,9 @@ class AX18A:
 			instruction_packet[i] = AX18A.checksum(instruction_packet)
 
 		except ValueError:
-			raise AX18A.ParameterError(self.ID, "get_instruction_packet: A value was larger than one byte")
+			raise AX18A.ParameterError(self.id, "get_instruction_packet: A value was larger than one byte")
 		except KeyError:
-			raise AX18A.ParameterError(self.ID, "get_instruction_packet: Instruction key not valid")
+			raise AX18A.ParameterError(self.id, "get_instruction_packet: Instruction key not valid")
 		else:
 			return instruction_packet
 
@@ -454,7 +454,7 @@ class AX18A:
 				AX18A.port.write(out_data)
 
 				# Read status packet if not broadcast ID
-				if (self.ID != AX18A.broadcasting_id):
+				if (self.id != AX18A.broadcasting_id):
 					status_packet = AX18A.get_status_packet()
 					# Update register values if status packet returned
 					self.register[address:(address+nParams)] = parameters
@@ -496,7 +496,7 @@ class AX18A:
 				AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
 				# Read status packet if not broadcast ID
-				if (self.ID != AX18A.broadcasting_id):
+				if (self.id != AX18A.broadcasting_id):
 					status_packet = AX18A.get_status_packet()
 					# Update register values if status packet returned
 					self.register[address:(address+nParams)] = parameters
@@ -532,7 +532,7 @@ class AX18A:
 				AX18A.set_direction(AX18A.GPIO_direction_RX) # Set direction pin back to RX
 
 				# Read status packet if not broadcast ID
-				if (self.ID != AX18A.broadcasting_id):
+				if (self.id != AX18A.broadcasting_id):
 					status_packet = AX18A.get_status_packet()
 				else:
 					status_packet = 0
@@ -567,7 +567,7 @@ class AX18A:
 				status_packet = AX18A.get_status_packet()
 				
 				# Set ID to 1 after reset
-				self.ID = 0x01
+				self.id = 0x01
 
 				return status_packet
 			except (AX18A.CommError) as err:
@@ -587,13 +587,13 @@ class AX18A:
 		# TESTING HAS SHOWN SYNC_WRITE NOT TO WORK, DESPITE MENTIONED IN DOCUMENTATION
 
 		# Check that broadcasting ID is being used
-		if (self.ID != AX18A.broadcasting_id):
-			raise AX18A.ParameterError(self.ID, "sync_write: instance ID must be broadcasting ID (0xFE)")
+		if (self.id != AX18A.broadcasting_id):
+			raise AX18A.ParameterError(self.id, "sync_write: instance ID must be broadcasting ID (0xFE)")
 
 		# Check that servos length adds up with *args length
 		nServos = len(servos)
 		if (nServos != len(args)):
-			raise AX18A.ParameterError(self.ID, "sync_write: number of servos not equal to number of write tuples")
+			raise AX18A.ParameterError(self.id, "sync_write: number of servos not equal to number of write tuples")
 
 		# Get number of parameters from number of variables in first arg tuple
 		nParams = len(args[0])
@@ -604,7 +604,7 @@ class AX18A:
 		for i, servo in enumerate(args):
 			# Check that all tuples are same length
 			if (len(servo) != nParams):
-				raise AX18A.ParameterError(self.ID, "sync_write: all servos must have the same amount of data to write")
+				raise AX18A.ParameterError(self.id, "sync_write: all servos must have the same amount of data to write")
 			# Add ID of servo to parameters
 			parameters.append(servos[i].ID)
 			# Add each parameters for servo
@@ -630,11 +630,11 @@ class AX18A:
 
 		# Check angle parameter
 		if (angle < 30 or angle > 330):
-			raise AX18A.ParameterError(self.ID, "move: angle must be between 30 and 330")
+			raise AX18A.ParameterError(self.id, "move: angle must be between 30 and 330")
 
 		# Check that speed value is in range
 		if (speed < 0 or speed > 113.5):
-			raise AX18A.ParameterError(self.ID, "move: speed number must be between 0 and 113.5")
+			raise AX18A.ParameterError(self.id, "move: speed number must be between 0 and 113.5")
 
 		# Get servo equivalent value
 		speed_value = int(speed/0.111)
@@ -663,7 +663,7 @@ class AX18A:
 
 		# Check angle parameter
 		if (angle_limit < 30 or angle_limit > 330):
-			raise AX18A.ParameterError(self.ID, "set_angle_limit: angle_limit must be between 30 and 330")
+			raise AX18A.ParameterError(self.id, "set_angle_limit: angle_limit must be between 30 and 330")
 
 		# Get lowest and highest byte of angle_limit value
 		dynamixel_angle = angle_limit-30
@@ -677,7 +677,7 @@ class AX18A:
 		elif (direction == AX18A.CCW):
 			address = AX18A.address['ccw_angle_limit_l']
 		else:
-			raise AX18A.ParameterError(self.ID, "set_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
+			raise AX18A.ParameterError(self.id, "set_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
 
 		# Write angle limit
 		self.write_data(address, angle_l, angle_h)
@@ -688,12 +688,12 @@ class AX18A:
 
 		# Check id parameter
 		if (new_id<0 or new_id>252):
-			raise AX18A.ParameterError(self.ID, "set_id: new_id must be in range 0-252")
+			raise AX18A.ParameterError(self.id, "set_id: new_id must be in range 0-252")
 
 		# Write id to servo register
 		self.write_data(AX18A.address['id'], new_id)
 		# Change instance id
-		self.ID = new_id
+		self.id = new_id
 
 	def set_max_torque(self, max_torque):
 		# Method to set the Max Torque of the servo (EEPROM area)
@@ -701,7 +701,7 @@ class AX18A:
 
 		# Check max_torque parameter
 		if (max_torque < 0 or max_torque > 100):
-			raise AX18A.ParameterError(self.ID, "set_max_torque: max_torque must be in range 0-100")
+			raise AX18A.ParameterError(self.id, "set_max_torque: max_torque must be in range 0-100")
 
 		# Get lowest and highest byte of torque value
 		torque_value = int(max_torque*10.23)
@@ -722,14 +722,14 @@ class AX18A:
 
 		# Check that parameters have been given
 		if (nParams == 0):
-			raise AX18A.ParameterError(self.ID, )
+			raise AX18A.ParameterError(self.id, )
 
 		# Check if number given as parameter
 		if (isinstance(args[0], int)):
 			alarm_value = args[0]
 			# Check correct input
 			if (not alarm_value in range(0, 128)):
-				raise AX18A.ParameterError(self.ID, "set_alarm: error value must be in range 0-127")
+				raise AX18A.ParameterError(self.id, "set_alarm: error value must be in range 0-127")
 		else:
 			alarm_value = 0
 			# Loop through each given error and assemble alarm value
@@ -738,7 +738,7 @@ class AX18A:
 					alarm_value = alarm_value | AX18A.return_error_value[error_str]
 			except KeyError:
 				# Raise error if incorrect string given
-				raise AX18A.ParameterError(self.ID, "set_alarm: at least one error name was incorrect")
+				raise AX18A.ParameterError(self.id, "set_alarm: at least one error name was incorrect")
 
 		if (alarm == "led" or alarm == "LED"):
 			# Write value to register
@@ -747,7 +747,7 @@ class AX18A:
 			# Write value to register
 			self.write_data(AX18A.address['alarm_shutdown'], alarm_value)
 		else:
-			raise AX18A.ParameterError(self.ID, "set_alarm: alarm must be either led or shutdown")
+			raise AX18A.ParameterError(self.id, "set_alarm: alarm must be either led or shutdown")
 
 	def set_torque_enable(self, torque_enable):
 		# Method to set torque enable. Torque enable makes the servo generate
@@ -785,10 +785,10 @@ class AX18A:
 
 		# Check parameters
 		if (margin < 0 or margin > 73):
-			raise AX18A.ParameterError(self.ID, "set_compliance: margin must be in range 0-73")
+			raise AX18A.ParameterError(self.id, "set_compliance: margin must be in range 0-73")
 
 		if (not slope in range(1,8)):
-			raise AX18A.ParameterError(self.ID, "set_compliance: slope must be in range 1-7")
+			raise AX18A.ParameterError(self.id, "set_compliance: slope must be in range 1-7")
 
 		# Calculate register values
 		margin_value = int(margin/0.29)
@@ -802,7 +802,7 @@ class AX18A:
 			self.write_data(AX18A.address['ccw_compliance_margin'], margin_value)
 			self.write_data(AX18A.address['ccw_compliance_slope'], slope_value)
 		else:
-			raise AX18A.ParameterError(self.ID, "set_compliance: direction must be AX18A.CW or AX18A.CCW")
+			raise AX18A.ParameterError(self.id, "set_compliance: direction must be AX18A.CW or AX18A.CCW")
 
 
 	def set_torque_limit(self, torque_limit):
@@ -812,7 +812,7 @@ class AX18A:
 
 		# Check torque_limit parameter
 		if (torque_limit < 0 or torque_limit > 100):
-			raise AX18A.ParameterError(self.ID, "set_torque_limit: torque_limit must be in range 0-100")
+			raise AX18A.ParameterError(self.id, "set_torque_limit: torque_limit must be in range 0-100")
 
 		# Get lowest and highest byte of torque value
 		torque_value = int(torque_limit*10.23)
@@ -829,7 +829,7 @@ class AX18A:
 		#	punch:	value between 0x03FF and 0x0000
 
 		if (not punch in range(0x0000, 0x0400)):
-			raise AX18A.ParameterError(self.ID, "set_punch: punch must be in range 0x0000-0x03FF")
+			raise AX18A.ParameterError(self.id, "set_punch: punch must be in range 0x0000-0x03FF")
 
 		# Get lowest and highest byte of punch
 		punch_l = punch & 0xFF
@@ -856,7 +856,7 @@ class AX18A:
 			angle_l = self.register[AX18A.address['ccw_angle_limit_l']]
 			angle_h = self.register[AX18A.address['ccw_angle_limit_h']]
 		else:
-			raise AX18A.ParameterError(self.ID, "get_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
+			raise AX18A.ParameterError(self.id, "get_angle_limit: direction must be either AX18A.CW or AX18A.CCW")
 
 		angle_full = angle_h << 8 | angle_l 	# Assemble 16bit variable (10bit max)
 		dynamixel_angle = angle_full/3.41		# Get angle as described in Dynamixel documentation
@@ -892,7 +892,7 @@ class AX18A:
 		elif (alarm == "shutdown" or alarm == "SHUTDOWN"):
 			error_value = self.register[AX18A.address['alarm_shutdown']]
 		else:
-			raise AX18A.ParameterError(self.ID, "get_alarm: alarm must be either led or shutdown")
+			raise AX18A.ParameterError(self.id, "get_alarm: alarm must be either led or shutdown")
 
 		# Get error name tuple
 		error_tuple = AX18A.get_error_tuple(error_value)
@@ -926,7 +926,7 @@ class AX18A:
 			margin_value = self.register[AX18A.address['ccw_compliance_margin']]
 			slope_value = self.register[AX18A.address['ccw_compliance_slope']]
 		else:
-			raise AX18A.ParameterError(self.ID, "get_compliance: direction must be either AX18A.CW or AX18A.CCW")
+			raise AX18A.ParameterError(self.id, "get_compliance: direction must be either AX18A.CW or AX18A.CCW")
 
 		# Convert to values of correct unit
 		margin = margin_value*0.29
@@ -973,7 +973,7 @@ class AX18A:
 			register_address_l = AX18A.address['goal_position_l']
 			register_address_h = AX18A.address['goal_position_h']
 		else:
-			raise AX18A.ParameterError(self.ID, "get_position: time must be either current or goal")
+			raise AX18A.ParameterError(self.id, "get_position: time must be either current or goal")
 
 		# Read from servo
 		(position_l, position_h) = self.read_data(register_address_l, 2)
