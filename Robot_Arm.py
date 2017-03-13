@@ -1,4 +1,5 @@
 from Dynamixel import AX18A
+import math
 
 class Arm:
 
@@ -9,6 +10,8 @@ class Arm:
 	elbow_l_id = 6
 	elbow_r_id = 7
 	rot_id = 8
+
+	joints = ('rot', 'elbow', 'hand', 'hand_rot', 'grip')
 
 	def __init__(self):
 
@@ -21,6 +24,12 @@ class Arm:
 		self.elbow_r = AX18A(Arm.elbow_r_id)
 		self.rot = AX18A(Arm.rot_id)
 		self.brod = AX18A(AX18A.broadcasting_id) # Broadcasting id for sending action instruction
+
+		self.servos = (self.grip, self.hand_rot, self.hand_l, self.hand_r, self.elbow_l, self.elbow_r, self.rot)
+
+		self.brod.set_compliance(0, 6, AX18A.CW)
+		self.brod.set_compliance(0, 6, AX18A.CCW)
+
 
 		self.position = self.get_position()
 		self.rotation = self.get_rotation()
@@ -59,14 +68,15 @@ class Arm:
 
 		all_pos_str = ""
 		for key, val in self.saved_positions.items():
-			all_pos_str += name + ":" + val + "\n"
+			all_pos_str += key + ":" + val + "\n"
 
 		f = open("positions.txt", 'w')
 		f.write(all_pos_str)
 		f.close
 
-	def move_to_position(self, position):
+	def move_to_position(self, position, *excluded):
 		# Move arm to position in saved position dictionary
+		# Can add joint strings after position parameter to exclude those joints
 		# Return True if success
 
 		try:
@@ -77,6 +87,7 @@ class Arm:
 
 		try:
 			angle_str_lst = pos_str.split(",")
+			joint_angles = [float(angle_str) for angle_str in angle_str_lst]
 			rot_angle = float(angle_str_lst[0])
 			elbow_angle = float(angle_str_lst[1])
 			hand_angle = float(angle_str_lst[2])
@@ -86,11 +97,26 @@ class Arm:
 			print("move_to_position: corrupted positions file")
 			return False
 
-		self.move_joint('rot', rot_angle)
-		self.move_joint('elbow', elbow_angle)
-		self.move_joint('hand', hand_angle)
-		self.move_joint('hand_rot', hand_rot_angle)
-		self.move_joint('grip', grip_angle)
+		ex_mask = 0
+		for joint in excluded:
+			try:
+				joint_index = Arm.joints.index(joint)
+				ex_mask += 2**joint_index
+			except ValueError:
+				print("move_to_position: invalid joint to exclude")
+
+		for i in range(0,5):
+			if (ex_mask & 2**i != 2**i):
+				self.move_joint(Arm.joints[i], joint_angles[i], speed=AX18A.slow)
+			else:
+				print("move_to_position: excluding ", Arm.joints[i])
+
+		return True
+		#self.move_joint('rot', rot_angle, AX18A.slow)
+		#self.move_joint('elbow', elbow_angle, AX18A.slow)
+		#self.move_joint('hand', hand_angle, AX18A.slow)
+		#self.move_joint('hand_rot', hand_rot_angle, AX18A.slow)
+		#self.move_joint('grip', grip_angle, AX18A.slow)
 
 	def move_joint(self, joint, angle, speed=AX18A.medium):
 		# Joint is string with possible values:
@@ -162,13 +188,13 @@ class Arm:
 
 	def rest(self):
 		try:
-			self.grip.move(255, method="reg")
-			self.hand_rot.move(180, method="reg")
+			self.grip.move(255, speed = AX18A.slow, method="reg")
+			self.hand_rot.move(180, speed = AX18A.slow, method="reg")
 			self.hand_l.move(60, speed=AX18A.slow, method="reg")
 			self.hand_r.move(300, speed=AX18A.slow, method="reg")
 			self.elbow_l.move(62, speed=AX18A.slow, method="reg")
 			self.elbow_r.move(298, speed=AX18A.slow, method="reg")
-			self.rot.move(180, method="reg")
+			self.rot.move(180, speed=AX18A.slow, method="reg")
 		except AX18A.CommError as err:
 			print("Failed to communicate with servo: ", err.args[0], "Error message: ", err.args[1])
 		except AX18A.ServoError as err:
@@ -178,12 +204,77 @@ class Arm:
 		AX18A.wait(8) # Wait 8 seconds before turning torque off
 		self.brod.set_torque_enable(False)
 
+	def get_joint_angle(self, joint):
+		# Returns joint angle, or displacement in case of grip.
+		# Returns false if invalid input
+		if (joint == 'rot'):
+			joint_angle = round(self.rot.get_position()-180, 2)
+		elif (joint == 'elbow'):
+			joint_angle = round(180-self.elbow_l.get_position(), 2)
+		elif (joint == 'hand'):
+			joint_angle = round(self.hand_l.get_position()-180, 2)
+		elif (joint == 'hand_rot'):
+			joint_angle = round(self.hand_rot.get_position()-180, 2)
+		elif (joint == 'grip'):
+			joint_angle = round(self.grip.get_position()-252, 2)*1.1
+		else:
+			print("get_joint_angle: invalid joint input")
+			return False
+
+		return joint_angle
+
 	def get_all_angles(self):
-		rot_angle = round(self.rot.get_position()-180, 2)
-		hand_angle = round(self.hand_l.get_position()-180, 2)
-		elbow_angle = round(180-self.elbow_l.get_position(), 2)
-		hand_rot_angle = round(self.hand_rot.get_position()-180, 2)
-		grip_disp = round(self.grip.get_position()-252, 2)*1.1
+		rot_angle = self.get_joint_angle('rot')
+		hand_angle = self.get_joint_angle('hand')
+		elbow_angle = self.get_joint_angle('elbow')
+		hand_rot_angle = self.get_joint_angle('hand_rot')
+		grip_disp = self.get_joint_angle('grip')
 
 		angles_dict = {"rot":rot_angle, "hand":hand_angle, "elbow":elbow_angle, "hand_rot":hand_rot_angle, "grip":grip_disp}
 		return angles_dict
+
+	def get_temps(self):
+		temps = {}
+		for servo in self.servos:
+			temps[servo.id] = servo.get_temperature()
+
+		return temps
+
+	def get_loads(self):
+		loads = {}
+		for servo in self.servos:
+			loads[servo.id] = servo.get_load()
+
+		return loads
+
+	def prepare_pickup(self):
+		if(self.move_to_position("prep_pickup")):
+			return True
+		else:
+			print("prepare_pickup: prep_pickup position not defined")
+			return False
+
+	def correct_pickup(self, distance):
+		radius = 277 # Should be changed to dynamic radius calculation
+		angle_rad = math.asin(distance/radius)
+		angle_deg = math.degrees(angle_rad)
+		self.move_joint('rot', angle_deg, AX18A.slow)
+		self.move_joint('hand_rot', angle_deg, AX18A.slow)
+
+	def pickup(self):
+		if (self.move_to_position("pickup", 'rot', 'hand_rot')):
+			return True
+		else:
+			print("pickup: pickup position not defined")
+			return False
+
+	def drop(self):
+		self.move_joint('grip', 40)
+
+	def hold(self):
+		if (self.move_to_position("hold", 'rot')):
+			return True
+		else:
+			print("hold: hold position not defined")
+			return False
+
